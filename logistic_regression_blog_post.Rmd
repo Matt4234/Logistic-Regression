@@ -1,0 +1,117 @@
+---
+title: "Logistic Regression Blog Post"
+author: "Matthew Schell"
+date: '2022-08-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(psych)
+library(car)
+library(reshape2)
+library(ggplot2)
+library(cowplot)
+
+airline <- read_csv("C:/Users/schel/My Drive/Personal/Blog/Data/Airline Satisfaction/Invistico_Airline.csv")
+```
+
+#Cleaning Data
+```{r}
+#Renaming variables with spaces to make them easier to work with
+airline <- rename(airline, inflight_entertainment = "Inflight entertainment", onboard_service = "On-board service", leg_room = "Leg room service", online_booking = "Ease of Online booking", online_boarding = "Online boarding", online_support = "Online support", food_drink = "Food and drink")
+
+#Recoding some character variables into numeric or factors
+airline$satisfied <- (car::recode(airline$satisfaction, c("'satisfied' = 1; 'dissatisfied' = 0")))
+airline$female <- car::recode(airline$Gender, c("'Female' = 1; 'Male' = 0"))
+airline$economy <- car::recode(airline$Class, c("'Eco' = 1; 'Business' = 0"))
+airline$economy <- as.numeric(airline$economy)
+
+#Replacing 0 with NA for survey questions (likert scale is 1-5, assuming 0 means a skipped question)
+airline2 <- select(airline, food_drink:online_boarding)
+airline <- select(airline, !(food_drink:online_boarding))
+
+airline2 <- na_if(airline2, 0)
+airline <-cbind(airline, airline2)
+
+describe(airline)
+```
+
+#Determining Variables in model using a correlation heatmap
+```{r}
+cordat <- select_if(airline, is.numeric)
+
+cormat <- round(cor(cordat, use = "pairwise.complete.obs"), 2)
+
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+dist <- as.dist((1-cormat)/2)
+
+hc <- hclust(dist)
+cormat <- cormat[hc$order, hc$order]
+
+melted_cormat <- melt(cormat)
+
+ggplot(data = melted_cormat, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1.05, hjust = 1.2)) +
+  scale_fill_gradient2(mid="#FBFEF9",low="#0C6291",high="#A63446", limits=c(-1,1)) +
+  labs(y = "", x = "")
+
+ggsave("heatmap.png", width = 11)
+```
+
+#Running logistic regression model
+```{r}
+fit <-glm(satisfied ~ female + economy + inflight_entertainment + onboard_service + leg_room + online_boarding + online_booking + online_support, data = airline, family = "binomial")
+summary(fit)
+
+#Calculating McFaddens pseudo R squared to make sure our fit model explains the data better than the null model (intercept only)
+ll.null <- fit$null.deviance/-2
+ll.fit.model <- fit$deviance/-2
+
+1 - ll.fit.model / ll.null
+
+1 - pchisq(2*(ll.fit.model - ll.null), df = (length(fit$coefficients)-1))
+
+#Now let's convert from log odds to odds ratios to make our coefficients more interpretable
+exp(coef(fit))
+exp(confint(fit))
+round( cbind( ORs = exp(coef(fit)), exp(confint(fit))), digits = 3)
+```
+
+#Making a graph of predicted probabilites
+```{r}
+#Since glm() uses listwise deletion we need to filter out observation with NA values in order for the two datasets to match when graphing the predicted probabilities.
+airline_pp <- filter(airline, !is.na(economy)) %>% 
+                   filter(!is.na(inflight_entertainment)) %>% 
+                   filter(!is.na(onboard_service)) %>% 
+                   filter(!is.na(leg_room)) %>% 
+                   filter(!is.na(online_boarding)) %>% 
+                   filter(!is.na(online_booking)) %>% 
+                   filter(!is.na(online_support))
+
+#Making a new data frame that matches the predicted outcome with the actual outcome, and ranks them.
+predicted_data <- data.frame(probability.of.satisfied = fit$fitted.values, satisfied = airline_pp$satisfied)
+predicted_data <- predicted_data[
+  + order(predicted_data$probability.of.satisfied, decreasing = FALSE),]
+predicted_data$rank <- 1:nrow(predicted_data)
+
+#Graphing the new data.
+predicted_data$satisfied <- as.factor(predicted_data$satisfied) 
+levels(predicted_data$satisfied) <- c("Not Satisfied", "Satisfied")
+
+ggplot(data = predicted_data, aes(x = rank, y = probability.of.satisfied)) +
+  geom_point(aes(color = satisfied), alpha = 1, shape = 4, stroke = 2) +
+  labs(x = "Customer Index", y = "Predicted probability of satisfied customer", color = "Satisfaction")
+  
+
+ggsave("predicted_probs.png", width = 9)
+```
+
