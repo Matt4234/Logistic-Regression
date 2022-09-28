@@ -1,2 +1,3 @@
 # Logistic-Regression
-This repository is associated with the logistic regression blog post from my website.
+This repository houses the PowerBI file for the following blog post on my website:
+[https://quantitativequandaries.com/2022/09/27/logistic-regression/](url)
